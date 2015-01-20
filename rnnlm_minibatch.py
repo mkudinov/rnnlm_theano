@@ -147,7 +147,7 @@ for epoch in range(2000):
     i = 0
     while position < train_len:
         batch_matrix, masks_matrix, position, n_minibatches_real = get_minibatch_matrix(train_data, n_minibatches_num, position)
-        train_ent = train_fn(batch_matrix[:-1,:], batch_matrix[1:,:], np.transpose(masks_matrix), learning_rate, current_momentum, n_minibatches_real, np.ones((n_hid,n_minibatches_num), T.config.floatX)*0.1)
+        train_ent = train_fn(batch_matrix[:-1,:], batch_matrix[1:,:], np.transpose(masks_matrix), learning_rate, current_momentum, n_minibatches_real, np.ones((n_hid,n_minibatches_real), T.config.floatX)*0.1)
         print "minibatch no. %s of shape %s by %s is processed. Av.entropy is %s" % (i, batch_matrix.shape[0], batch_matrix.shape[1], train_ent[0] )
         i += 1
     print "Training finished"
