@@ -29,8 +29,8 @@ def get_minibatch_matrix(dataset, number, starting_point):
 
 np.set_printoptions(threshold=np.nan)
 
-path = "rnnlm_theano/Data/mikolov_corp.npz"
-path_dic = "rnnlm_theanoh/Data/mikolov_dict.npz"
+path = "Data/mikolov_corp.npz"
+path_dic = "Data/mikolov_dict.npz"
 
 #dictionary = np.load(path_dic)
 
@@ -39,12 +39,17 @@ data = np.load(path)
 oov_code = data["oov"]
 n_words = data["n_words"]
 
-train_data = np.append([0], data['train_words']).astype('int32')
-train_data = np.asarray([x for x in train_data if x != oov_code]).astype('int32')
-train_len = train_data.shape[0]
+#train_data = np.append([0], data['train_words']).astype('int32')
+#train_data = np.asarray([x for x in train_data if x != oov_code]).astype('int32')
+#train_len = train_data.shape[0]
 
-valid_data = np.append([0], data["valid_words"]).astype('int32')
-valid_data = np.asarray([x for x in valid_data if x != oov_code]).astype('int32')
+#valid_data = np.append([0], data["valid_words"]).astype('int32')
+#valid_data = np.asarray([x for x in valid_data if x != oov_code]).astype('int32')
+#valid_len = valid_data.shape[0]
+
+train_data = data['train_words'].astype(np.int32)
+train_len = train_data.shape[0]
+valid_data = data['valid_words'].astype(np.int32)
 valid_len = valid_data.shape[0]
 
 n_in = n_words
@@ -58,30 +63,38 @@ lr = TT.scalar('lr', T.config.floatX)
 mom = TT.scalar('lr', T.config.floatX)
 n_minibatches = TT.scalar('n_minibatches', 'int32')
 H0 = TT.matrix('H0', T.config.floatX)
-x = TT.vector('x', 'int32')
-y = TT.vector('y', 'int32')
-h0 = TT.vector('h0', T.config.floatX)
 print "Compilation"
 
-W_in = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_in)).astype(T.config.floatX), borrow=True)
+W_init = np.random.uniform(-0.1, 0.1, (n_hid, n_in + 1)).astype(T.config.floatX)
+W_init[:,oov_code] = np.asarray([0] * n_hid)
+W_in = T.shared(W_init, borrow=True)
 W_rec = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_hid)).astype(T.config.floatX), borrow=True)
 W_out = T.shared(np.random.uniform(-0.1, 0.1, (n_in, n_hid)).astype(T.config.floatX), borrow=True)
 
-W_in_theta_update = T.shared(np.zeros((n_hid, n_in), dtype=T.config.floatX), borrow=True)
+W_in_theta_update = T.shared(np.zeros((n_hid, n_in + 1), dtype=T.config.floatX), borrow=True)
 W_rec_theta_update = T.shared(np.zeros((n_hid, n_hid), dtype=T.config.floatX), borrow=True)
 W_out_theta_update = T.shared(np.zeros((n_in, n_hid), dtype=T.config.floatX), borrow=True)
 
-def forward_step(x_t, h_tm1):
-    h_t = TT.nnet.sigmoid(TT.dot(W_rec, h_tm1) + W_in[:, x_t])
+x = TT.scalar('x', 'int32')
+y = TT.scalar('y', 'int32')
+lr = TT.scalar('lr', T.config.floatX)
+h_init = np.asarray(np.ones(n_hid)) * 0.1
+
+h = T.shared(h_init, borrow=True)
+
+def forward_step(x_t):
+    h_t = TT.nnet.sigmoid(TT.dot(W_rec, h) + W_in[:, x_t])
     y_t = TT.flatten(TT.nnet.softmax(TT.dot(W_out, h_t)),1)
 #    h_t *= (x_t > 0)
     return [h_t, y_t]
+
+[h_t_fb, y_t_fb] = forward_step(x)
 
 def forward_batch_step(x_t, H_mask, H_tm1):
     H = TT.dot(W_rec,H_tm1) + W_in[:,x_t]
     H_t = TT.nnet.sigmoid(H)
     Y_t = TT.nnet.softmax(TT.transpose(TT.dot(W_out, H_t)))
-   # Y_t = -TT.log2(Y_t)
+    Y_t = -TT.log2(Y_t)
     Y_t = TT.dot(TT.transpose(Y_t), TT.diag(H_mask))
     return [H_t, Y_t]
 
@@ -90,17 +103,19 @@ def forward_batch_step(x_t, H_mask, H_tm1):
                          outputs_info=[H0, None]
                         )
 
-[h_ts_fb, y_predicted_fb], _ = T.scan(forward_step,
-                         sequences=[x],
-                         outputs_info=[h0, None]
-                        )
+#[h_ts_fb, y_predicted_fb], _ = T.scan(forward_step,
+#                         sequences=[x],
+#                         outputs_info=[h0, None]
+#                        )
 
-#logprobs = y_predicted[TT.arange(Y.shape[0]), TT.transpose(Y), TT.reshape(TT.arange(n_minibatches),(n_minibatches,1))]
-#DENOM_th = TT.diag(1/TT.sum(logprobs>0, axis=1).astype('float32'))
-#cross_entropy = TT.sum(TT.dot(DENOM_th,logprobs)) / n_minibatches
+logprobs = y_predicted[TT.arange(Y.shape[0]), TT.transpose(Y), TT.reshape(TT.arange(n_minibatches),(n_minibatches,1))]
+DENOM_th = TT.diag(1/TT.sum(logprobs>0, axis=1).astype('float32'))
+cross_entropy = TT.sum(TT.dot(DENOM_th,logprobs)) / n_minibatches
 
-cross_entropy = -TT.mean(TT.log2(TT.nonzero_values(y_predicted[TT.arange(Y.shape[0]), TT.transpose(Y), TT.reshape(TT.arange(n_minibatches),(n_minibatches,1))])))
-cross_entropy_fb = -TT.mean(TT.log2(y_predicted_fb)[TT.arange(y.shape[0]), y])
+#cross_entropy = -TT.mean(TT.log2(TT.nonzero_values(y_predicted[TT.arange(Y.shape[0]), TT.transpose(Y), TT.reshape(TT.arange(n_minibatches),(n_minibatches,1))])))
+#cross_entropy_fb = -TT.mean(TT.log2(y_predicted_fb)[TT.arange(y.shape[0]), y])
+
+cross_entropy_fb = -TT.log2(y_t_fb)[y]
 
 params = [W_in, W_rec, W_out]
 theta_updates = {W_in: W_in_theta_update, W_rec: W_rec_theta_update, W_out: W_out_theta_update}
@@ -126,8 +141,10 @@ train_fn = T.function(
 valid_fn = T.function(
     [x, y],
     cross_entropy_fb,
-    givens=[(h0, np.ones(n_hid, T.config.floatX)*0.1)]
+    updates=[(h, h_t_fb,)]
 )
+
+reset_fn = T.function([],[], updates={h: h_init})
 
 #debug_fn = T.function([X, Y, X_MASK, n_minibatches, H0], [logprobs, DENOM_th, cross_entropy])
 
@@ -151,23 +168,36 @@ for epoch in range(2000):
         print "minibatch no. %s of shape %s by %s is processed. Av.entropy is %s" % (i, batch_matrix.shape[0], batch_matrix.shape[1], train_ent[0] )
         i += 1
     print "Training finished"
-    valid_ent = valid_fn(valid_data[:-1], valid_data[1:])
+    word_cnt = 0
+    reset_fn()
+    valid_ent = 0
+    for index in range(valid_len - 1):
+        if valid_data[index + 1] != oov_code:
+            ce_t = valid_fn(valid_data[index], valid_data[index + 1])
+            valid_ent += ce_t
+            word_cnt += 1
+        else:
+            valid_fn(valid_data[index], valid_data[index + 1]) #we do it just to switch the state. we don't actually predict+
+    valid_ent /= word_cnt
     print "Epoch: %s  Valid entropy: %s" % (epoch,  valid_ent)
 
-    if valid_ent >= valid_ent_prev:
+    if valid_ent > valid_ent_prev * 1.0002:
         failed += 1
         if failed == 2:
-            if not decrease_started:
-                print "Decrease started:"
-                decrease_started = True
+            #if not decrease_started:
+               # print "Decrease started:"
+               # decrease_started = True
+            if learning_rate > 2 ** -7:
+               learning_rate /= 2
+               print learning_rate
             else:
                 print "Finished"
                 break
     else:
         failed = 0
 
-    if decrease_started:
-        learning_rate /= 2
+    #f decrease_started:
+     #  learning_rate /= 2
 
     valid_ent_prev = valid_ent
 
