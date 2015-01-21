@@ -68,9 +68,9 @@ h_init = np.asarray(np.ones(n_hid)) * 0.1
 # W_rec = T.shared(w_rec_debug)
 # W_out = T.shared(w_out_debug)
 
-W_init = np.random.uniform(-0.1, 0.1, (n_hid, n_in + 1))
+W_init = np.random.uniform(-0.1, 0.1, (n_hid, n_in + 1)).astype(T.config.floatX)
 W_init[:,oov_code] = np.asarray([0] * n_hid)
-W_in = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_in + 1)).astype(T.config.floatX))
+W_in = T.shared(W_init, borrow=True)
 W_rec = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_hid)).astype(T.config.floatX))
 W_out = T.shared(np.random.uniform(-0.1, 0.1, (n_in, n_hid)).astype(T.config.floatX))
 

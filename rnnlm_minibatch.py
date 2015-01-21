@@ -1,6 +1,7 @@
 import numpy as np
 import theano as T
 import theano.tensor as TT
+import cPickle
 
 def get_minibatch_matrix(dataset, number, starting_point):
     batches = []
@@ -27,10 +28,23 @@ def get_minibatch_matrix(dataset, number, starting_point):
             l += ([0] * (max_len - len(l)))
     return np.transpose(np.asarray(batches, np.int32)), np.asarray(batch_masks, np.int32), end_point, len(batches)
 
+def get_valid_ent():
+    valid_ent = 0
+    word_cnt = 0
+    for index in range(valid_len - 1):
+        if valid_data[index + 1] != oov_code:
+            ce_t = valid_fn(valid_data[index], valid_data[index + 1])
+            valid_ent += ce_t
+            word_cnt += 1
+        else:
+            valid_fn(valid_data[index], valid_data[index + 1]) #we do it just to switch the state. we don't actually predict+
+    valid_ent /= word_cnt
+    return valid_ent
+
 np.set_printoptions(threshold=np.nan)
 
-path = "Data/mikolov_corp.npz"
-path_dic = "Data/mikolov_dict.npz"
+path = "Data/fake_corp.npz"
+path_dic = "Data/fake_dict.npz"
 
 #dictionary = np.load(path_dic)
 
@@ -49,11 +63,11 @@ n_words = data["n_words"]
 
 train_data = data['train_words'].astype(np.int32)
 train_len = train_data.shape[0]
-valid_data = data['valid_words'].astype(np.int32)
+valid_data = np.append([0], data["valid_words"]).astype('int32')
 valid_len = valid_data.shape[0]
 
 n_in = n_words
-n_hid = 100 
+n_hid = 100
 n_minibatches_num = 100
 
 X = TT.matrix('X', 'int32')
@@ -67,9 +81,9 @@ print "Compilation"
 
 W_init = np.random.uniform(-0.1, 0.1, (n_hid, n_in + 1)).astype(T.config.floatX)
 W_init[:,oov_code] = np.asarray([0] * n_hid)
-W_in = T.shared(W_init, borrow=True)
-W_rec = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_hid)).astype(T.config.floatX), borrow=True)
-W_out = T.shared(np.random.uniform(-0.1, 0.1, (n_in, n_hid)).astype(T.config.floatX), borrow=True)
+W_in = T.shared(W_init, borrow=True, name='W_in')
+W_rec = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_hid)).astype(T.config.floatX), borrow=True, name='W_rec')
+W_out = T.shared(np.random.uniform(-0.1, 0.1, (n_in, n_hid)).astype(T.config.floatX), borrow=True, name='W_out')
 
 W_in_theta_update = T.shared(np.zeros((n_hid, n_in + 1), dtype=T.config.floatX), borrow=True)
 W_rec_theta_update = T.shared(np.zeros((n_hid, n_hid), dtype=T.config.floatX), borrow=True)
@@ -77,7 +91,6 @@ W_out_theta_update = T.shared(np.zeros((n_in, n_hid), dtype=T.config.floatX), bo
 
 x = TT.scalar('x', 'int32')
 y = TT.scalar('y', 'int32')
-lr = TT.scalar('lr', T.config.floatX)
 h_init = np.asarray(np.ones(n_hid)) * 0.1
 
 h = T.shared(h_init, borrow=True)
@@ -148,16 +161,19 @@ reset_fn = T.function([],[], updates={h: h_init})
 
 #debug_fn = T.function([X, Y, X_MASK, n_minibatches, H0], [logprobs, DENOM_th, cross_entropy])
 
-learning_rate = 0.1
-valid_ent_prev = 100
+learning_rate = 1.
+valid_ent_prev = get_valid_ent()
 decrease_started = False
 
 print "Start!"
 
 failed = 0
-
 current_momentum = 0.995
-for epoch in range(2000):
+best_valid_cost = valid_ent_prev
+best_params = [(param.name, param.get_value()) for param in params]
+improvement_started = False
+
+for epoch in range(20000):
     if epoch > 10:
         current_momentum = 0.9
     position = 0
@@ -168,20 +184,11 @@ for epoch in range(2000):
         print "minibatch no. %s of shape %s by %s is processed. Av.entropy is %s" % (i, batch_matrix.shape[0], batch_matrix.shape[1], train_ent[0] )
         i += 1
     print "Training finished"
-    word_cnt = 0
     reset_fn()
-    valid_ent = 0
-    for index in range(valid_len - 1):
-        if valid_data[index + 1] != oov_code:
-            ce_t = valid_fn(valid_data[index], valid_data[index + 1])
-            valid_ent += ce_t
-            word_cnt += 1
-        else:
-            valid_fn(valid_data[index], valid_data[index + 1]) #we do it just to switch the state. we don't actually predict+
-    valid_ent /= word_cnt
+    valid_ent = get_valid_ent()
     print "Epoch: %s  Valid entropy: %s" % (epoch,  valid_ent)
 
-    if valid_ent > valid_ent_prev * 1.0002:
+    if valid_ent > valid_ent_prev * 1.0002 or not improvement_started:
         failed += 1
         if failed == 2:
             #if not decrease_started:
@@ -189,11 +196,16 @@ for epoch in range(2000):
                # decrease_started = True
             if learning_rate > 2 ** -7:
                learning_rate /= 2
-               print learning_rate
+               print "Learning rate is decreased to %s: " % learning_rate
+               bparams = dict(best_params)
+               for param in params:
+                   param.set_value(bparams[param.name])
             else:
+                cPickle.dump(best_params, open('model.pkl', 'w'))
                 print "Finished"
                 break
     else:
+        improvement_started = True
         failed = 0
 
     #f decrease_started:
@@ -201,5 +213,12 @@ for epoch in range(2000):
 
     valid_ent_prev = valid_ent
 
-    if epoch == 1999:
+    if valid_ent < best_valid_cost:
+        best_valid_cost = valid_ent
+        best_params = [(param.name, param.get_value()) for param in params]
+
+    if epoch == 19999:
         print "Maximum epoch reached"
+
+    if epoch + 1 % 10 == 0:
+        cPickle.dump(best_params, open('model.pkl', 'w'))
