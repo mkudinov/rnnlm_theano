@@ -208,6 +208,7 @@ for epoch in range(20000):
                bparams = dict(best_params)
                for param in params:
                    param.set_value(bparams[param.name])
+                failed = 0
             else:
                 cPickle.dump(best_params, open('model.pkl', 'w'))
                 print "Finished"

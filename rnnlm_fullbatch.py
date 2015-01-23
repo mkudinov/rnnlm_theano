@@ -1,11 +1,12 @@
 import numpy as np
 import theano as T
 import theano.tensor as TT
+import cPickle
 
 np.set_printoptions(threshold=np.nan)
 
-path = "/home/mkudinov/Data/fake29-data/tmp_data.npz"
-path_dic = "/home/mkudinov/fake29-data/Data/tmp_data_dict.npz"
+path = "Data/fake_corp.npz"
+path_dic = "Data/fake_dict.npz"
 
 #dictionary = np.load(path_dic)
 
@@ -61,9 +62,9 @@ print "Compilation"
 # W_rec = T.shared(w_rec_debug)
 # W_out = T.shared(w_out_debug)
 
-W_in = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_in)).astype(T.config.floatX), borrow=True)
-W_rec = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_hid)).astype(T.config.floatX), borrow=True)
-W_out = T.shared(np.random.uniform(-0.1, 0.1, (n_in, n_hid)).astype(T.config.floatX), borrow=True)
+W_in = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_in)).astype(T.config.floatX), borrow=True, name='W_in')
+W_rec = T.shared(np.random.uniform(-0.1, 0.1, (n_hid, n_hid)).astype(T.config.floatX), borrow=True, name='W_rec')
+W_out = T.shared(np.random.uniform(-0.1, 0.1, (n_in, n_hid)).astype(T.config.floatX), borrow=True, name='W_out')
 
 def forward_step(x_t, h_tm1):
     h_t = TT.nnet.sigmoid(TT.dot(W_rec, h_tm1) + W_in[:, x_t])
@@ -110,42 +111,51 @@ valid_ent_prev = 100
 decrease_started = False
 
 print "Start!"
-
-failed = 0
-
-epoch = 0
-
-final_momentum=0.9
+final_momentum=0.995
 initial_momentum=0.0
 momentum_switchover=10
 
-best_valid = 10e30
-not_improved = 0
+failed = 0
+best_valid_cost = valid_ent_prev
+best_params = [(param.name, param.get_value()) for param in params]
+improvement_started = False
 
-while True:
+for epoch in range(20000):
     effective_momentum = final_momentum if epoch > momentum_switchover else initial_momentum
-
     train_ent, grads = train_fn(train_data[:-1], train_data[1:], learning_rate, effective_momentum)
     valid_ent = valid_fn(valid_data[:-1], valid_data[1:])
-    if valid_ent < best_valid:
-        best_valid = valid_ent
 
     print "Epoch: %s Train entropy: %s Valid entropy: %s LR: %s" % (epoch, train_ent, valid_ent, learning_rate)
 
-    if valid_ent >= valid_ent_prev or learning_rate < 2**-10:
+    if valid_ent >= best_valid_cost:
         failed += 1
-        if failed == 10:
-            if not decrease_started:
-                print "Decrease started:"
-                decrease_started = True
+        if failed >= 50 or not improvement_started:
+            if learning_rate > 2 ** -7:
+                learning_rate /= 2
+                print "Learning rate is decreased to %s: " % learning_rate
+                bparams = dict(best_params)
+                for param in params:
+                    param.set_value(bparams[param.name])
+                failed = 0
             else:
-                print "Finished. Best entropy on validation set acheived is %8.5f" % best_valid
+                cPickle.dump(best_params, open('model.pkl', 'w'))
+                print "Finished. Best result: %s" % best_valid_cost
                 break
     else:
+        improvement_started = True
         failed = 0
 
-    if decrease_started:
-        learning_rate /= 2
+    #f decrease_started:
+     #  learning_rate /= 2
 
     valid_ent_prev = valid_ent
-    epoch += 1
+
+    if valid_ent < best_valid_cost:
+        best_valid_cost = valid_ent
+        best_params = [(param.name, param.get_value()) for param in params]
+
+    if epoch == 19999:
+        print "Maximum epoch reached"
+
+    if epoch + 1 % 10 == 0:
+        cPickle.dump(best_params, open('model.pkl', 'w'))
