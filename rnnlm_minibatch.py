@@ -31,9 +31,13 @@ def get_minibatch_matrix(dataset, number, starting_point):
 def get_valid_ent():
     valid_ent = 0
     word_cnt = 0
+    i = 0
     for index in range(valid_len - 1):
         if valid_data[index + 1] != oov_code:
             ce_t = valid_fn(valid_data[index], valid_data[index + 1])
+            if np.isnan(ce_t):
+                print "nan encountered in position %s" % i 
+                exit()
             valid_ent += ce_t
             word_cnt += 1
         else:
@@ -43,8 +47,8 @@ def get_valid_ent():
 
 np.set_printoptions(threshold=np.nan)
 
-path = "Data/fake_corp.npz"
-path_dic = "Data/fake_dict.npz"
+path = "Data/mikolov_corp.npz"
+path_dic = "Data/mikolov_dict.npz"
 
 #dictionary = np.load(path_dic)
 
@@ -67,8 +71,8 @@ valid_data = np.append([0], data["valid_words"]).astype('int32')
 valid_len = valid_data.shape[0]
 
 n_in = n_words
-n_hid = 100
-n_minibatches_num = 100
+n_hid = 30
+n_minibatches_num = 1
 
 X = TT.matrix('X', 'int32')
 Y = TT.matrix('Y', 'int32')
@@ -147,7 +151,7 @@ for param, grad in zip(params, g_params):
 
 train_fn = T.function(
     [X, Y, X_MASK, lr, mom, n_minibatches, H0],
-    [cross_entropy],
+    [cross_entropy, logprobs],
     updates=updates
 )
 
@@ -161,7 +165,7 @@ reset_fn = T.function([],[], updates={h: h_init})
 
 #debug_fn = T.function([X, Y, X_MASK, n_minibatches, H0], [logprobs, DENOM_th, cross_entropy])
 
-learning_rate = 1.
+learning_rate = 0.1
 valid_ent_prev = get_valid_ent()
 decrease_started = False
 
@@ -180,17 +184,21 @@ for epoch in range(20000):
     i = 0
     while position < train_len:
         batch_matrix, masks_matrix, position, n_minibatches_real = get_minibatch_matrix(train_data, n_minibatches_num, position)
-        train_ent = train_fn(batch_matrix[:-1,:], batch_matrix[1:,:], np.transpose(masks_matrix), learning_rate, current_momentum, n_minibatches_real, np.ones((n_hid,n_minibatches_real), T.config.floatX)*0.1)
-        print "minibatch no. %s of shape %s by %s is processed. Av.entropy is %s" % (i, batch_matrix.shape[0], batch_matrix.shape[1], train_ent[0] )
+        train_ent,lps = train_fn(batch_matrix[:-1,:], batch_matrix[1:,:], np.transpose(masks_matrix), learning_rate, current_momentum, n_minibatches_real, np.ones((n_hid,n_minibatches_real), T.config.floatX)*0.1)
+        if np.isnan(train_ent):
+            print "nan encountered in minibatch %s" % i
+            print lps
+            exit()
+        #print "minibatch no. %s of shape %s by %s is processed. Av.entropy is %s" % (i, batch_matrix.shape[0], batch_matrix.shape[1], train_ent )
         i += 1
-    print "Training finished"
+   # print "Training finished"
     reset_fn()
     valid_ent = get_valid_ent()
-    print "Epoch: %s  Valid entropy: %s" % (epoch,  valid_ent)
+    print "Epoch: %s Valid entropy: %s Learning rate: %s" % (epoch,  valid_ent, learning_rate )
 
-    if valid_ent > valid_ent_prev * 1.0002 or not improvement_started:
+    if valid_ent >= best_valid_cost:
         failed += 1
-        if failed == 2:
+        if failed >= 5 or not improvement_started:
             #if not decrease_started:
                # print "Decrease started:"
                # decrease_started = True
